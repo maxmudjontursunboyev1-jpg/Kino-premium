@@ -60,7 +60,7 @@ cursor = db.cursor()
 cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
 cursor.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 cursor.execute("CREATE TABLE IF NOT EXISTS channels (id INTEGER PRIMARY KEY AUTOINCREMENT, link TEXT UNIQUE, type TEXT, username TEXT)")
-cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('sub_status', 'on'), ('btn_text', 'Kanalga aʼzo boʻling'), ('btn_url', 'https://t.me/your_channel')")
+cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('sub_status', 'on'), ('btn_text', 'Boshqa kino kodlari '), ('btn_url', 'http://t.me/Kino_movie_TMR')")
 db.commit()
 
 class AdminStates(StatesGroup):
