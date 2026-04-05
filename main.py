@@ -11,9 +11,6 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-# --- LOGGING ---
-logging.basicConfig(level=logging.INFO)
-
 # --- PREMIUM EMOJI ID-LARI ---
 EMOJIS = {
     "welcome": "5199885118214255386",
@@ -50,18 +47,13 @@ db = sqlite3.connect("bot_data.db", check_same_thread=False)
 cursor = db.cursor()
 cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
 cursor.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
-# Dinamik tugmalar uchun yangi jadval
-cursor.execute("CREATE TABLE IF NOT EXISTS buttons (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, url TEXT, type TEXT)") 
+cursor.execute("CREATE TABLE IF NOT EXISTS buttons (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, url TEXT)")
 db.commit()
 
 # Default sozlamalar
 defaults = [('sub_status', 'on')]
 for k, v in defaults:
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
-# Agar tugmalar bo'sh bo'lsa, bitta default tugma qo'shamiz
-cursor.execute("SELECT COUNT(*) FROM buttons")
-if cursor.fetchone()[0] == 0:
-    cursor.execute("INSERT INTO buttons (name, url, type) VALUES (?, ?, ?)", ("🎬 Kanalimiz", "https://t.me/Kino_movie_TMR", "url"))
 db.commit()
 
 # --- FSM STATES ---
@@ -70,10 +62,11 @@ class AdminStates(StatesGroup):
     add_btn_url = State()
     waiting_for_ad = State()
 
-# --- KLAVIATURALAR ---
+# --- ADMIN KLAVIATURASI ---
 def main_admin_kb():
     cursor.execute("SELECT value FROM settings WHERE key='sub_status'")
-    sub_text = "🟢 Obuna: YONIQ" if cursor.fetchone()[0] == 'on' else "🔴 Obuna: O'CHIQ"
+    sub_val = cursor.fetchone()[0]
+    sub_text = "🟢 Obuna: YONIQ" if sub_val == 'on' else "🔴 Obuna: O'CHIQ"
     
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="📢 Reklama")],
@@ -81,6 +74,7 @@ def main_admin_kb():
         [KeyboardButton(text=sub_text)]
     ], resize_keyboard=True)
 
+# --- DYNAMIK INLINE TUGMALAR ---
 def get_movie_kb():
     cursor.execute("SELECT name, url FROM buttons")
     btns = cursor.fetchall()
@@ -89,7 +83,7 @@ def get_movie_kb():
         keyboard.append([InlineKeyboardButton(text=name, url=url)])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# --- STATUS TEKSHIRISH ---
+# --- OBUNA TEKSHIRISH ---
 async def check_sub(user_id: int) -> bool:
     cursor.execute("SELECT value FROM settings WHERE key='sub_status'")
     if cursor.fetchone()[0] == 'off': return True
@@ -98,7 +92,7 @@ async def check_sub(user_id: int) -> bool:
         return m.status in ['member', 'administrator', 'creator']
     except: return False
 
-# --- HANDLERLAR ---
+# --- ASOSIY HANDLERLAR ---
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, command: CommandObject):
@@ -111,21 +105,19 @@ async def cmd_start(message: types.Message, command: CommandObject):
         if await check_sub(user_id):
             try:
                 await bot.copy_message(message.chat.id, MOVIE_CHANNEL_ID, int(args), reply_markup=get_movie_kb())
-                return
             except:
                 await message.answer(f"{get_emo('not_found')} <b>Kino topilmadi!</b>")
-                return
         else:
             me = await bot.get_me()
             sub_kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="📢 Kanalga a'zo bo'lish", url=f"https://t.me/{MOVIE_CHANNEL_ID.replace('@','')}")],
-                [InlineKeyboardButton(text="✅ Tasdiqlash", url=f"https://t.me/{me.username}?start={args}")]
+                [InlineKeyboardButton(text="✅ Tasdiqlash / Ko'rish", url=f"https://t.me/{me.username}?start={args}")]
             ])
             await message.answer(f"{get_emo('sub')} <b>Kino ko'rish uchun kanalga a'zo bo'ling!</b>", reply_markup=sub_kb)
-            return
+        return
 
     if user_id == ADMIN_ID:
-        await message.answer(f"{get_emo('admin')} <b>Admin panel</b>", reply_markup=main_admin_kb())
+        await message.answer(f"{get_emo('admin')} <b>Admin panelga xush kelibsiz!</b>", reply_markup=main_admin_kb())
     else:
         await message.answer(f"{get_emo('welcome')} <b>Xush kelibsiz!</b>\n\nKino kodini yuboring {get_emo('search')}")
 
@@ -144,56 +136,69 @@ async def search_movie(message: types.Message):
     except:
         await message.answer(f"{get_emo('not_found')} <b>Kino topilmadi!</b>")
 
-# --- ADMIN FUNKSIYALARI ---
+# --- ADMIN BOSHQARUVI ---
 
 @dp.message(F.text.in_(["🟢 Obuna: YONIQ", "🔴 Obuna: O'CHIQ"]), F.from_user.id == ADMIN_ID)
-async def toggle_sub(m: types.Message):
+async def toggle_subscription(m: types.Message):
     cursor.execute("SELECT value FROM settings WHERE key='sub_status'")
-    new_stat = 'off' if cursor.fetchone()[0] == 'on' else 'on'
-    cursor.execute("UPDATE settings SET value=? WHERE key='sub_status'", (new_stat,))
+    current = cursor.fetchone()[0]
+    new_status = 'off' if current == 'on' else 'on'
+    cursor.execute("UPDATE settings SET value=? WHERE key='sub_status'", (new_status,))
     db.commit()
-    await m.answer(f"Status o'zgardi!", reply_markup=main_admin_kb())
+    status_text = "o'chirildi 🔴" if new_status == 'off' else "yoqildi 🟢"
+    await m.answer(f"✅ Majburiy obuna {status_text}", reply_markup=main_admin_kb())
 
 @dp.message(F.text == "➕ Tugma qo'shish", F.from_user.id == ADMIN_ID)
-async def add_btn(m: types.Message, state: FSMContext):
-    await m.answer("Tugma nomini yuboring:"); await state.set_state(AdminStates.add_btn_name)
+async def add_button_start(m: types.Message, state: FSMContext):
+    await m.answer("Tugma uchun nom yuboring (masalan: 📱 Ilovani ochish):")
+    await state.set_state(AdminStates.add_btn_name)
 
 @dp.message(AdminStates.add_btn_name)
-async def set_name(m: types.Message, state: FSMContext):
-    await state.update_data(name=m.text)
-    await m.answer("Tugma linkini yuboring:"); await state.set_state(AdminStates.add_btn_url)
+async def add_button_name(m: types.Message, state: FSMContext):
+    await state.update_data(btn_name=m.text)
+    await m.answer("Endi ushbu tugma uchun link (URL) yuboring:")
+    await state.set_state(AdminStates.add_btn_url)
 
 @dp.message(AdminStates.add_btn_url)
-async def set_url(m: types.Message, state: FSMContext):
+async def add_button_url(m: types.Message, state: FSMContext):
     data = await state.get_data()
-    cursor.execute("INSERT INTO buttons (name, url, type) VALUES (?, ?, ?)", (data['name'], m.text, "url"))
+    cursor.execute("INSERT INTO buttons (name, url) VALUES (?, ?)", (data['btn_name'], m.text))
     db.commit()
-    await m.answer("✅ Yangi tugma qo'shildi!", reply_markup=main_admin_kb()); await state.clear()
+    await m.answer("✅ Tugma muvaffaqiyatli qo'shildi!", reply_markup=main_admin_kb())
+    await state.clear()
 
 @dp.message(F.text == "🗑 Tugmalarni tozalash", F.from_user.id == ADMIN_ID)
-async def clear_btns(m: types.Message):
-    cursor.execute("DELETE FROM buttons"); db.commit()
-    await m.answer("🗑 Barcha inline tugmalar o'chirildi!", reply_markup=main_admin_kb())
+async def clear_all_buttons(m: types.Message):
+    cursor.execute("DELETE FROM buttons")
+    db.commit()
+    await m.answer("🗑 Barcha inline tugmalar tozalandi!", reply_markup=main_admin_kb())
 
 @dp.message(F.text == "📊 Statistika", F.from_user.id == ADMIN_ID)
-async def stats(m: types.Message):
-    cursor.execute("SELECT COUNT(*) FROM users"); count = cursor.fetchone()[0]
-    await m.answer(f"📊 Foydalanuvchilar: <b>{count}</b>")
+async def stats_view(m: types.Message):
+    cursor.execute("SELECT COUNT(*) FROM users")
+    count = cursor.fetchone()[0]
+    await m.answer(f"📊 Jami foydalanuvchilar: <b>{count}</b>")
 
 @dp.message(F.text == "📢 Reklama", F.from_user.id == ADMIN_ID)
-async def ad_s(m: types.Message, state: FSMContext):
-    await m.answer(f"{get_emo('ad_sending')} <b>Reklama xabarini yuboring:</b>"); await state.set_state(AdminStates.waiting_for_ad)
+async def advertising(m: types.Message, state: FSMContext):
+    await m.answer(f"{get_emo('ad_sending')} <b>Reklama xabarini yuboring (matn, rasm yoki video):</b>")
+    await state.set_state(AdminStates.waiting_for_ad)
 
 @dp.message(AdminStates.waiting_for_ad)
-async def ad_f(m: types.Message, state: FSMContext):
+async def send_ads(m: types.Message, state: FSMContext):
     cursor.execute("SELECT user_id FROM users"); users = cursor.fetchall()
-    await m.answer("🚀 Tarqatilmoqda..."); c = 0
+    await m.answer("🚀 Reklama tarqatish boshlandi...")
+    count = 0
     for u in users:
-        try: await m.copy_to(u[0]); c += 1; await asyncio.sleep(0.05)
+        try:
+            await m.copy_to(u[0])
+            count += 1
+            await asyncio.sleep(0.05)
         except: pass
-    await m.answer(f"✅ {c} kishiga yuborildi.", reply_markup=main_admin_kb()); await state.clear()
+    await m.answer(f"✅ Reklama {count} kishiga muvaffaqiyatli yuborildi.", reply_markup=main_admin_kb())
+    await state.clear()
 
-# --- MAIN ---
+# --- ISHGA TUSHIRISH ---
 async def main():
     Thread(target=run_webserver, daemon=True).start()
     await bot.delete_webhook(drop_pending_updates=True)
