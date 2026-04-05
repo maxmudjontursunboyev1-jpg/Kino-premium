@@ -43,9 +43,9 @@ def run_webserver():
     app.run(host='0.0.0.0', port=port)
 
 # --- SOZLAMALAR ---
-API_TOKEN = "8232377176:AAE2rn6WIk4NslzAQw_ABKYJN0A7O3FaY94"
-ADMIN_ID = 6205634567
-MOVIE_CHANNEL_ID = "@Kino_movie_TMR"
+API_TOKEN = "7774202263:AAE4lZbIdDZflKhFWTBmLfPz3D3XwlyXr38"
+ADMIN_ID = 7339714216
+MOVIE_CHANNEL_ID = "-1002619474183"
 
 # Bot obyektini HTML parse_mode bilan yaratamiz (bu juda muhim!)
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
