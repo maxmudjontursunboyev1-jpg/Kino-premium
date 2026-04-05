@@ -5,30 +5,38 @@ import sqlite3
 from flask import Flask
 from threading import Thread
 from aiogram import Bot, Dispatcher, types, F
+from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command, CommandObject
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-# --- PREMIUM EMOJI ID-LARI ---
+# --- LOGGING ---
+logging.basicConfig(level=logging.INFO)
+
+# --- PREMIUM EMOJI FUNKSIYASI ---
+# Siz bergan ID-larni aniq formatda joylashtiramiz
 EMOJIS = {
     "welcome": "5199885118214255386",
     "sub": "5352640560718949874",
     "search": "5458774648621643551",
     "not_found": "5323329096845897690",
-    "admin": "5323772371830588991"
+    "admin": "5323772371830588991",
+    "ad_sending": "5422446685655676792"
 }
 
 def get_emo(name):
-    emoji_id = EMOJIS.get(name, "✨")
-    return f'<tg-emoji emoji-id="{emoji_id}">✨</tg-emoji>'
+    emoji_id = EMOJIS.get(name)
+    if emoji_id:
+        # ✨ belgisi o'rniga istalgan placeholder qo'yish mumkin, 
+        # asosiysi tg-emoji tegi ichida bo'lishi
+        return f'<tg-emoji emoji-id="{emoji_id}">💎</tg-emoji>'
+    return "✨"
 
-# --- WEBSERVER (Render uchun) ---
+# --- WEBSERVER ---
 app = Flask(__name__)
-
 @app.route('/')
-def home(): 
-    return "Bot is alive!"
+def home(): return "Bot is alive!"
 
 def run_webserver():
     port = int(os.environ.get('PORT', 8080))
@@ -39,8 +47,8 @@ API_TOKEN = "8232377176:AAE2rn6WIk4NslzAQw_ABKYJN0A7O3FaY94"
 ADMIN_ID = 6205634567
 MOVIE_CHANNEL_ID = "@Kino_movie_TMR"
 
-logging.basicConfig(level=logging.INFO)
-bot = Bot(token=API_TOKEN)
+# Bot obyektini HTML parse_mode bilan yaratamiz (bu juda muhim!)
+bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
 # --- BAZA ---
@@ -60,18 +68,17 @@ for k, v in defaults:
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
 db.commit()
 
-# --- FSM STATES ---
+# --- STATES ---
 class AdminStates(StatesGroup):
     waiting_for_btn_text = State()
     waiting_for_btn_url = State()
     waiting_for_app_url = State()
-    waiting_for_ad_text = State()
+    waiting_for_ad_content = State()
 
 # --- TUGMALAR ---
 def main_admin_kb():
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="📢 Reklama yuborish")],
-        [KeyboardButton(text="⚙️ Sozlamalar")],
         [KeyboardButton(text="📝 Tugma matni"), KeyboardButton(text="🔗 Tugma linki")],
         [KeyboardButton(text="📱 Ilova linki")]
     ], resize_keyboard=True)
@@ -85,8 +92,7 @@ def get_inline_button():
         [InlineKeyboardButton(text="📱 Ilovani ochish", web_app=types.WebAppInfo(url=app_url))]
     ])
 
-# --- STATUS TEKSHIRISH ---
-async def get_user_status(user_id: int) -> bool:
+async def check_sub(user_id: int) -> bool:
     cursor.execute("SELECT value FROM settings WHERE key='sub_status'")
     if cursor.fetchone()[0] == 'off': return True
     try:
@@ -102,77 +108,85 @@ async def cmd_start(message: types.Message, command: CommandObject):
     cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
     db.commit()
     
-    args = command.args # WebApp dan kelgan kod
-    
+    args = command.args 
     if args and args.isdigit():
-        if await get_user_status(user_id):
+        if await check_sub(user_id):
             try:
                 await bot.copy_message(message.chat.id, MOVIE_CHANNEL_ID, int(args), reply_markup=get_inline_button())
                 return
             except:
-                await message.answer(f"{get_emo('not_found')} Kino topilmadi!", parse_mode="HTML")
+                await message.answer(f"{get_emo('not_found')} <b>Kino topilmadi!</b>")
                 return
         else:
             me = await bot.get_me()
-            retry_url = f"https://t.me/{me.username}?start={args}"
             sub_kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="📢 Kanalga a'zo bo'lish", url=f"https://t.me/{MOVIE_CHANNEL_ID.replace('@','')}")],
-                [InlineKeyboardButton(text="✅ A'zo bo'ldim / Ko'rish", url=retry_url)]
+                [InlineKeyboardButton(text="✅ Tasdiqlash", url=f"https://t.me/{me.username}?start={args}")]
             ])
-            await message.answer(f"{get_emo('sub')} <b>Kanalga a'zo bo'ling!</b>", reply_markup=sub_kb, parse_mode="HTML")
+            await message.answer(f"{get_emo('sub')} <b>Kino ko'rish uchun kanalga a'zo bo'ling!</b>", reply_markup=sub_kb)
             return
 
     if user_id == ADMIN_ID:
-        await message.answer(f"{get_emo('admin')} <b>Admin panel</b>", reply_markup=main_admin_kb(), parse_mode="HTML")
+        await message.answer(f"{get_emo('admin')} <b>Admin panel</b>", reply_markup=main_admin_kb())
     else:
-        await message.answer(f"{get_emo('welcome')} <b>Xush kelibsiz!</b>\n\nKino kodini yuboring 🎥", parse_mode="HTML")
+        await message.answer(f"{get_emo('welcome')} <b>Xush kelibsiz!</b>\n\nKino kodini yuboring {get_emo('search')}")
 
 @dp.message(F.text.regexp(r'^\d+$'))
 async def search_movie(message: types.Message):
-    if not await get_user_status(message.from_user.id):
-        await message.answer(f"{get_emo('sub')} <b>Avval a'zo bo'ling!</b>", reply_markup=get_inline_button(), parse_mode="HTML")
+    if not await check_sub(message.from_user.id):
+        me = await bot.get_me()
+        sub_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Kanalga a'zo bo'lish", url=f"https://t.me/{MOVIE_CHANNEL_ID.replace('@','')}")],
+            [InlineKeyboardButton(text="✅ Tasdiqlash", url=f"https://t.me/{me.username}?start={message.text}")]
+        ])
+        await message.answer(f"{get_emo('sub')} <b>Avval kanalga a'zo bo'ling!</b>", reply_markup=sub_kb)
         return
     try:
         await bot.copy_message(message.chat.id, MOVIE_CHANNEL_ID, int(message.text), reply_markup=get_inline_button())
     except:
-        await message.answer(f"{get_emo('not_found')} <b>Topilmadi!</b>", parse_mode="HTML")
+        await message.answer(f"{get_emo('not_found')} <b>Kino topilmadi!</b>")
 
-# --- ADMIN EDIT HANDLERS ---
+# --- ADMIN FUNKSIYALARI ---
+@dp.message(F.text == "📊 Statistika", F.from_user.id == ADMIN_ID)
+async def stats(m: types.Message):
+    cursor.execute("SELECT COUNT(*) FROM users")
+    await m.answer(f"📊 Jami foydalanuvchilar: <b>{cursor.fetchone()[0]}</b>")
+
+@dp.message(F.text == "📢 Reklama yuborish", F.from_user.id == ADMIN_ID)
+async def ad_s(m: types.Message, state: FSMContext):
+    await m.answer(f"{get_emo('ad_sending')} <b>Reklama xabarini yuboring:</b>")
+    await state.set_state(AdminStates.waiting_for_ad_content)
+
+@dp.message(AdminStates.waiting_for_ad_content)
+async def ad_f(m: types.Message, state: FSMContext):
+    cursor.execute("SELECT user_id FROM users"); users = cursor.fetchall()
+    await m.answer("🚀 Reklama tarqatilmoqda..."); c = 0
+    for u in users:
+        try: 
+            await m.copy_to(u[0])
+            c += 1
+            await asyncio.sleep(0.05)
+        except: pass
+    await m.answer(f"✅ {c} kishiga yuborildi."); await state.clear()
+
+# --- SOZLAMALARNI TAHRIRLASH ---
 @dp.message(F.text == "📝 Tugma matni", F.from_user.id == ADMIN_ID)
 async def edit_t(m: types.Message, state: FSMContext):
-    await m.answer("Yangi tugma matnini yuboring:"); await state.set_state(AdminStates.waiting_for_btn_text)
+    await m.answer("Yangi matnni yuboring:"); await state.set_state(AdminStates.waiting_for_btn_text)
 
 @dp.message(AdminStates.waiting_for_btn_text)
 async def s_t(m: types.Message, state: FSMContext):
     cursor.execute("UPDATE settings SET value=? WHERE key='btn_text'", (m.text,)); db.commit()
     await m.answer("✅ Saqlandi!", reply_markup=main_admin_kb()); await state.clear()
 
-@dp.message(F.text == "📱 Ilova linki", F.from_user.id == ADMIN_ID)
-async def edit_a(m: types.Message, state: FSMContext):
-    await m.answer("Apps Script linkini yuboring:"); await state.set_state(AdminStates.waiting_for_app_url)
+@dp.message(F.text == "🔗 Tugma linki", F.from_user.id == ADMIN_ID)
+async def edit_l(m: types.Message, state: FSMContext):
+    await m.answer("Yangi linkni yuboring:"); await state.set_state(AdminStates.waiting_for_btn_url)
 
-@dp.message(AdminStates.waiting_for_app_url)
-async def s_a(m: types.Message, state: FSMContext):
-    cursor.execute("UPDATE settings SET value=? WHERE key='app_url'", (m.text,)); db.commit()
+@dp.message(AdminStates.waiting_for_btn_url)
+async def s_l(m: types.Message, state: FSMContext):
+    cursor.execute("UPDATE settings SET value=? WHERE key='btn_url'", (m.text,)); db.commit()
     await m.answer("✅ Saqlandi!", reply_markup=main_admin_kb()); await state.clear()
-
-@dp.message(F.text == "📊 Statistika", F.from_user.id == ADMIN_ID)
-async def stats(m: types.Message):
-    cursor.execute("SELECT COUNT(*) FROM users")
-    await m.answer(f"📊 Foydalanuvchilar: {cursor.fetchone()[0]}")
-
-@dp.message(F.text == "📢 Reklama yuborish", F.from_user.id == ADMIN_ID)
-async def ad_s(m: types.Message, state: FSMContext):
-    await m.answer("Xabarni yuboring:"); await state.set_state(AdminStates.waiting_for_ad_text)
-
-@dp.message(AdminStates.waiting_for_ad_text)
-async def ad_f(m: types.Message, state: FSMContext):
-    cursor.execute("SELECT user_id FROM users"); users = cursor.fetchall()
-    await m.answer("Yuborish boshlandi..."); c = 0
-    for u in users:
-        try: await m.copy_to(u[0]); c += 1; await asyncio.sleep(0.05)
-        except: pass
-    await m.answer(f"✅ {c} kishiga yuborildi."); await state.clear()
 
 # --- ISHGA TUSHIRISH ---
 async def main():
