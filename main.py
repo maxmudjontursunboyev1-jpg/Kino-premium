@@ -14,8 +14,7 @@ from aiogram.fsm.state import State, StatesGroup
 # --- LOGGING ---
 logging.basicConfig(level=logging.INFO)
 
-# --- PREMIUM EMOJI FUNKSIYASI ---
-# Siz bergan ID-larni aniq formatda joylashtiramiz
+# --- PREMIUM EMOJI ID-LARI ---
 EMOJIS = {
     "welcome": "5199885118214255386",
     "sub": "5352640560718949874",
@@ -27,11 +26,7 @@ EMOJIS = {
 
 def get_emo(name):
     emoji_id = EMOJIS.get(name)
-    if emoji_id:
-        # ✨ belgisi o'rniga istalgan placeholder qo'yish mumkin, 
-        # asosiysi tg-emoji tegi ichida bo'lishi
-        return f'<tg-emoji emoji-id="{emoji_id}">💎</tg-emoji>'
-    return "✨"
+    return f'<tg-emoji emoji-id="{emoji_id}">✨</tg-emoji>' if emoji_id else "✨"
 
 # --- WEBSERVER ---
 app = Flask(__name__)
@@ -47,7 +42,6 @@ API_TOKEN = "7774202263:AAE4lZbIdDZflKhFWTBmLfPz3D3XwlyXr38"
 ADMIN_ID = 7339714216
 MOVIE_CHANNEL_ID = "-1002619474183"
 
-# Bot obyektini HTML parse_mode bilan yaratamiz (bu juda muhim!)
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
@@ -56,42 +50,46 @@ db = sqlite3.connect("bot_data.db", check_same_thread=False)
 cursor = db.cursor()
 cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
 cursor.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+# Dinamik tugmalar uchun yangi jadval
+cursor.execute("CREATE TABLE IF NOT EXISTS buttons (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, url TEXT, type TEXT)") 
 db.commit()
 
-defaults = [
-    ('sub_status', 'on'),
-    ('btn_text', 'Boshqa kino kodlari'),
-    ('btn_url', 'http://t.me/Kino_movie_TMR'),
-    ('app_url', 'https://script.google.com/')
-]
+# Default sozlamalar
+defaults = [('sub_status', 'on')]
 for k, v in defaults:
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
+# Agar tugmalar bo'sh bo'lsa, bitta default tugma qo'shamiz
+cursor.execute("SELECT COUNT(*) FROM buttons")
+if cursor.fetchone()[0] == 0:
+    cursor.execute("INSERT INTO buttons (name, url, type) VALUES (?, ?, ?)", ("🎬 Kanalimiz", "https://t.me/Kino_movie_TMR", "url"))
 db.commit()
 
-# --- STATES ---
+# --- FSM STATES ---
 class AdminStates(StatesGroup):
-    waiting_for_btn_text = State()
-    waiting_for_btn_url = State()
-    waiting_for_app_url = State()
-    waiting_for_ad_content = State()
+    add_btn_name = State()
+    add_btn_url = State()
+    waiting_for_ad = State()
 
-# --- TUGMALAR ---
+# --- KLAVIATURALAR ---
 def main_admin_kb():
+    cursor.execute("SELECT value FROM settings WHERE key='sub_status'")
+    sub_text = "🟢 Obuna: YONIQ" if cursor.fetchone()[0] == 'on' else "🔴 Obuna: O'CHIQ"
+    
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="📢 Reklama yuborish")],
-        [KeyboardButton(text="📝 Tugma matni"), KeyboardButton(text="🔗 Tugma linki")],
-        [KeyboardButton(text="📱 Ilova linki")]
+        [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="📢 Reklama")],
+        [KeyboardButton(text="➕ Tugma qo'shish"), KeyboardButton(text="🗑 Tugmalarni tozalash")],
+        [KeyboardButton(text=sub_text)]
     ], resize_keyboard=True)
 
-def get_inline_button():
-    cursor.execute("SELECT value FROM settings WHERE key='btn_text'"); t = cursor.fetchone()[0]
-    cursor.execute("SELECT value FROM settings WHERE key='btn_url'"); u = cursor.fetchone()[0]
-    cursor.execute("SELECT value FROM settings WHERE key='app_url'"); app_url = cursor.fetchone()[0]
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=t, url=u)],
-        [InlineKeyboardButton(text="📱 Ilovani ochish", web_app=types.WebAppInfo(url=app_url))]
-    ])
+def get_movie_kb():
+    cursor.execute("SELECT name, url FROM buttons")
+    btns = cursor.fetchall()
+    keyboard = []
+    for name, url in btns:
+        keyboard.append([InlineKeyboardButton(text=name, url=url)])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+# --- STATUS TEKSHIRISH ---
 async def check_sub(user_id: int) -> bool:
     cursor.execute("SELECT value FROM settings WHERE key='sub_status'")
     if cursor.fetchone()[0] == 'off': return True
@@ -108,11 +106,11 @@ async def cmd_start(message: types.Message, command: CommandObject):
     cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
     db.commit()
     
-    args = command.args 
+    args = command.args
     if args and args.isdigit():
         if await check_sub(user_id):
             try:
-                await bot.copy_message(message.chat.id, MOVIE_CHANNEL_ID, int(args), reply_markup=get_inline_button())
+                await bot.copy_message(message.chat.id, MOVIE_CHANNEL_ID, int(args), reply_markup=get_movie_kb())
                 return
             except:
                 await message.answer(f"{get_emo('not_found')} <b>Kino topilmadi!</b>")
@@ -142,53 +140,60 @@ async def search_movie(message: types.Message):
         await message.answer(f"{get_emo('sub')} <b>Avval kanalga a'zo bo'ling!</b>", reply_markup=sub_kb)
         return
     try:
-        await bot.copy_message(message.chat.id, MOVIE_CHANNEL_ID, int(message.text), reply_markup=get_inline_button())
+        await bot.copy_message(message.chat.id, MOVIE_CHANNEL_ID, int(message.text), reply_markup=get_movie_kb())
     except:
         await message.answer(f"{get_emo('not_found')} <b>Kino topilmadi!</b>")
 
 # --- ADMIN FUNKSIYALARI ---
+
+@dp.message(F.text.in_(["🟢 Obuna: YONIQ", "🔴 Obuna: O'CHIQ"]), F.from_user.id == ADMIN_ID)
+async def toggle_sub(m: types.Message):
+    cursor.execute("SELECT value FROM settings WHERE key='sub_status'")
+    new_stat = 'off' if cursor.fetchone()[0] == 'on' else 'on'
+    cursor.execute("UPDATE settings SET value=? WHERE key='sub_status'", (new_stat,))
+    db.commit()
+    await m.answer(f"Status o'zgardi!", reply_markup=main_admin_kb())
+
+@dp.message(F.text == "➕ Tugma qo'shish", F.from_user.id == ADMIN_ID)
+async def add_btn(m: types.Message, state: FSMContext):
+    await m.answer("Tugma nomini yuboring:"); await state.set_state(AdminStates.add_btn_name)
+
+@dp.message(AdminStates.add_btn_name)
+async def set_name(m: types.Message, state: FSMContext):
+    await state.update_data(name=m.text)
+    await m.answer("Tugma linkini yuboring:"); await state.set_state(AdminStates.add_btn_url)
+
+@dp.message(AdminStates.add_btn_url)
+async def set_url(m: types.Message, state: FSMContext):
+    data = await state.get_data()
+    cursor.execute("INSERT INTO buttons (name, url, type) VALUES (?, ?, ?)", (data['name'], m.text, "url"))
+    db.commit()
+    await m.answer("✅ Yangi tugma qo'shildi!", reply_markup=main_admin_kb()); await state.clear()
+
+@dp.message(F.text == "🗑 Tugmalarni tozalash", F.from_user.id == ADMIN_ID)
+async def clear_btns(m: types.Message):
+    cursor.execute("DELETE FROM buttons"); db.commit()
+    await m.answer("🗑 Barcha inline tugmalar o'chirildi!", reply_markup=main_admin_kb())
+
 @dp.message(F.text == "📊 Statistika", F.from_user.id == ADMIN_ID)
 async def stats(m: types.Message):
-    cursor.execute("SELECT COUNT(*) FROM users")
-    await m.answer(f"📊 Jami foydalanuvchilar: <b>{cursor.fetchone()[0]}</b>")
+    cursor.execute("SELECT COUNT(*) FROM users"); count = cursor.fetchone()[0]
+    await m.answer(f"📊 Foydalanuvchilar: <b>{count}</b>")
 
-@dp.message(F.text == "📢 Reklama yuborish", F.from_user.id == ADMIN_ID)
+@dp.message(F.text == "📢 Reklama", F.from_user.id == ADMIN_ID)
 async def ad_s(m: types.Message, state: FSMContext):
-    await m.answer(f"{get_emo('ad_sending')} <b>Reklama xabarini yuboring:</b>")
-    await state.set_state(AdminStates.waiting_for_ad_content)
+    await m.answer(f"{get_emo('ad_sending')} <b>Reklama xabarini yuboring:</b>"); await state.set_state(AdminStates.waiting_for_ad)
 
-@dp.message(AdminStates.waiting_for_ad_content)
+@dp.message(AdminStates.waiting_for_ad)
 async def ad_f(m: types.Message, state: FSMContext):
     cursor.execute("SELECT user_id FROM users"); users = cursor.fetchall()
-    await m.answer("🚀 Reklama tarqatilmoqda..."); c = 0
+    await m.answer("🚀 Tarqatilmoqda..."); c = 0
     for u in users:
-        try: 
-            await m.copy_to(u[0])
-            c += 1
-            await asyncio.sleep(0.05)
+        try: await m.copy_to(u[0]); c += 1; await asyncio.sleep(0.05)
         except: pass
-    await m.answer(f"✅ {c} kishiga yuborildi."); await state.clear()
+    await m.answer(f"✅ {c} kishiga yuborildi.", reply_markup=main_admin_kb()); await state.clear()
 
-# --- SOZLAMALARNI TAHRIRLASH ---
-@dp.message(F.text == "📝 Tugma matni", F.from_user.id == ADMIN_ID)
-async def edit_t(m: types.Message, state: FSMContext):
-    await m.answer("Yangi matnni yuboring:"); await state.set_state(AdminStates.waiting_for_btn_text)
-
-@dp.message(AdminStates.waiting_for_btn_text)
-async def s_t(m: types.Message, state: FSMContext):
-    cursor.execute("UPDATE settings SET value=? WHERE key='btn_text'", (m.text,)); db.commit()
-    await m.answer("✅ Saqlandi!", reply_markup=main_admin_kb()); await state.clear()
-
-@dp.message(F.text == "🔗 Tugma linki", F.from_user.id == ADMIN_ID)
-async def edit_l(m: types.Message, state: FSMContext):
-    await m.answer("Yangi linkni yuboring:"); await state.set_state(AdminStates.waiting_for_btn_url)
-
-@dp.message(AdminStates.waiting_for_btn_url)
-async def s_l(m: types.Message, state: FSMContext):
-    cursor.execute("UPDATE settings SET value=? WHERE key='btn_url'", (m.text,)); db.commit()
-    await m.answer("✅ Saqlandi!", reply_markup=main_admin_kb()); await state.clear()
-
-# --- ISHGA TUSHIRISH ---
+# --- MAIN ---
 async def main():
     Thread(target=run_webserver, daemon=True).start()
     await bot.delete_webhook(drop_pending_updates=True)
