@@ -119,7 +119,7 @@ async def cmd_start(message: types.Message, command: CommandObject):
     if user_id == ADMIN_ID:
         await message.answer(f"{get_emo('admin')} <b>Admin panelga xush kelibsiz!</b>", reply_markup=main_admin_kb())
     else:
-        await message.answer(f"{get_emo('welcome')} <b>Xush kelibsiz!</b>\n\nKino kodini yuboring {get_emo('search')}")
+        await message.answer(f"{get_emo('welcome')} <b>Xush kelibsiz!</b>\n\nPastdagi tugmani bosing va ilovada chiqgan kinolarni ko'rish tugmasi bosilganidan so'ng bu yerda tomosha qilish mumkin bo'ladi {get_emo('search')}")
 
 @dp.message(F.text.regexp(r'^\d+$'))
 async def search_movie(message: types.Message):
